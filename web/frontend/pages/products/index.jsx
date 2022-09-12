@@ -38,7 +38,7 @@ export default function EditProducts() {
           <Card sectioned>
             <Heading>Prompt Parameters bucl</Heading>
             <Subheading>Tags</Subheading>
-            <MultiSelect />
+            {/* <MultiSelect /> */}
           </Card>
           <Card sectioned>
             <Heading>Heading</Heading>

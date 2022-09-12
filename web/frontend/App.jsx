@@ -26,7 +26,7 @@ export default function App() {
                 },
                 {
                   label: "Edit Products",
-                  destination: "/editproducts",
+                  destination: "/products",
                 },
               ]}
             />

@@ -5,6 +5,11 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import { Shopify, LATEST_API_VERSION } from "@shopify/shopify-api";
 import { Product } from "@shopify/shopify-api/dist/rest-resources/2022-07/index.js";
+import ProductModel from "./models/ProductModel.js";
+import StoreModel from "./models/StoreModel.js";
+
+// @ts-ignore
+// import Shopify from "./utils/Shopify.js";
 import applyAuthMiddleware from "./middleware/auth.js";
 import verifyRequest from "./middleware/verify-request.js";
 import { setupGDPRWebHooks } from "./gdpr.js";
@@ -13,21 +18,20 @@ import redirectToAuth from "./helpers/redirect-to-auth.js";
 import { BillingInterval } from "./helpers/ensure-billing.js";
 import { AppInstallations } from "./app_installations.js";
 import sessionStorage from "./utils/sessionStorage.js";
-import { Configuration, OpenAIApi } from "openai";
 
 import dotenv from "dotenv";
 dotenv.config();
 import mongoose from "mongoose";
-import StoreModel from "./models/StoreModel.js";
-import ProductModel from "./models/ProductModel.js";
-import CompletionModel from "./models/CompletionModel.js";
+
+import apiRouter from "./routes/index.js";
+import productRoutes from "./routes/productRoutes.js";
+import completionRoutes from "./routes/completionRoutes.js";
 // import bodyParser from "body-parser";
 // import getProducts from "./helpers/getProducts.js";
 
 const USE_ONLINE_TOKENS = false;
 
 const PORT = parseInt(process.env.BACKEND_PORT || process.env.PORT, 10);
-const { OPEN_API_KEY } = process.env;
 
 // TODO: There should be provided by env vars
 const DEV_INDEX_PATH = `${process.cwd()}/frontend/`;
@@ -126,270 +130,10 @@ export async function createServer(
     })
   );
 
-  app.get("/api/products/count", async (req, res) => {
-    const session = await Shopify.Utils.loadCurrentSession(
-      req,
-      res,
-      app.get("use-online-tokens")
-    );
-    const { Product } = await import(
-      `@shopify/shopify-api/dist/rest-resources/${Shopify.Context.API_VERSION}/index.js`
-    );
-
-    const countData = await Product.count({ session });
-    res.status(200).send(countData);
-  });
-
-  app.get("/api/products/create", async (req, res) => {
-    const session = await Shopify.Utils.loadCurrentSession(
-      req,
-      res,
-      app.get("use-online-tokens")
-    );
-    let status = 200;
-    let error = null;
-
-    try {
-      await productCreator(session);
-    } catch (e) {
-      console.log(`Failed to process products/create: ${e.message}`);
-      status = 500;
-      error = e.message;
-    }
-    res.status(status).send({ success: status === 200, error });
-  });
-
-  app.get("/api/products/import", async (req, res) => {
-    const session = await Shopify.Utils.loadCurrentSession(
-      req,
-      res,
-      app.get("use-online-tokens")
-    );
-    let status = 200;
-    let error = null;
-    let data = [];
-    try {
-      data = await Product.all({
-        session: session,
-      });
-
-      res.status(status).json(data);
-    } catch (e) {
-      console.log(`Failed to process products/all: ${e.message}`);
-      status = 500;
-      error = e.message;
-      res.status(status).send(error);
-    }
-  });
-
-  // All endpoints after this point will have access to a request.body
-  // attribute, as a result of the express.json() middleware
-  // app.use(bodyParser.urlencoded({ extended: false}));
-
-  // app.use(bodyParser.json());
   app.use(express.json());
+  app.use("/api/products", productRoutes);
 
-  app.post("/api/products/import", async (req, res) => {
-    const session = await Shopify.Utils.loadCurrentSession(
-      req,
-      res,
-      app.get("use-online-tokens")
-    );
-    let status = 200;
-    let error = null;
-    let data = [];
-    let body;
-    let newProducts;
-
-    try {
-      if (!req.query.products) {
-        return res
-          .status(status)
-          .send({ success: status === 300, error, body: "MISSING PARAMS" });
-      }
-      data = await Product.all({
-        session: session,
-      });
-      const { products } = req.query;
-      const productArr = products.split(",");
-      const productsFormattedArr = data.map((d) => {
-        const match = productArr.filter((n) => d.id.toString() === n);
-        if (match.length > 0) {
-          return {
-            shopify_id: d.id,
-            title: d.title,
-            price: d.variants[0].price,
-            currentDescription: d.body_html,
-            tags: d.tags,
-          };
-        } else {
-          return;
-        }
-      });
-      const finalArr = productsFormattedArr.filter((n) => n !== undefined);
-
-      const isShopAvailable = await StoreModel.find({ shop: session.shop });
-
-      if (isShopAvailable.length) {
-        console.log(isShopAvailable, "updatedshop");
-
-        const oldProducts = await ProductModel.find({});
-
-        const filteredProd = finalArr.filter((v) => {
-          let num = oldProducts.filter(
-            (g) => v?.shopify_id?.toString() === g.shopify_id?.toString()
-          );
-          if (num.length === 0) {
-            return v;
-          }
-          return;
-        });
-
-        console.log(filteredProd);
-
-        if (filteredProd.length > 0) {
-          newProducts = await ProductModel.insertMany(filteredProd).catch((e) =>
-            console.log(e)
-          );
-
-          console.log(newProducts);
-          const newProductIds = newProducts.map((v) => v._id);
-
-          const updateShop = await StoreModel.findOneAndUpdate(
-            { shop: session.shop },
-            { $push: { products: newProductIds } }
-          );
-          body = updateShop;
-        }
-
-        return res
-          .status(status)
-          .send({ success: status === 200, error, body: body });
-      } else {
-        const newProducts = await ProductModel.insertMany(finalArr).catch((e) =>
-          console.log(e)
-        );
-        console.log(newProducts);
-
-        const newProductIds = newProducts.map((v) => v._id);
-
-        const createdShop = await StoreModel.create({
-          shop: session.shop,
-          isActive: true,
-          products: newProductIds,
-        });
-        // const newProducts = await ProductModel.insertMany(finalArr).catch(e => console.log(e));
-
-        body = createdShop.populate("products");
-        console.log(body, "createdShop");
-
-        return res
-          .status(status)
-          .send({ success: status === 200, error, body: body });
-      }
-
-      console.log(body, "posted");
-
-      res.status(status).send({ success: status === 200, error, body: body });
-    } catch (e) {
-      console.log(`Failed to process products/all: ${e.message}`);
-      status = 500;
-      error = e.message;
-      res.status(status).send(error);
-    }
-  });
-
-  app.get("/api/products/edit/:id", async (req, res) => {
-    const session = await Shopify.Utils.loadCurrentSession(
-      req,
-      res,
-      app.get("use-online-tokens")
-    );
-    let status = 200;
-    let error = null;
-    let body = null;
-    const id = req.params.id;
-    // console.log(id);
-    try {
-      const product = await ProductModel.findOne({ shopify_id: id }).populate({
-        path: "generatedContent",
-      });
-      console.log(product);
-
-      // const selectedProduct = products.products.filter(
-      //   (n) => n.shopify_id.toString() === id.toString()
-      // );
-
-      const productObj = product;
-      body = productObj;
-    } catch (e) {
-      console.log(`Failed to process products/edit: ${e.message}`);
-      status = 500;
-      error = e.message;
-    }
-    res.status(status).send({ success: status === 200, error, body: body });
-  });
-
-  app.post("/api/products/edit/:id", async (req, res) => {
-    const session = await Shopify.Utils.loadCurrentSession(
-      req,
-      res,
-      app.get("use-online-tokens")
-    );
-    let status = 200;
-    let error = null;
-    let body = null;
-    let newCompletion = null;
-    // const id = req.params;
-    try {
-      const configuration = new Configuration({
-        apiKey: OPEN_API_KEY,
-      });
-      const openai = new OpenAIApi(configuration);
-      body = req.query;
-      const id = req.params.id;
-      const prompt = `Write A high converting product description useing the following information:
-      tags: ${body.tags.toString()} | product title: ${body.title} | Example: ${
-        body.description
-      }
-      `;
-
-      const response = await openai.createCompletion({
-        model: "text-curie-001",
-        prompt: prompt,
-        temperature: 0.9,
-        max_tokens: 200,
-      });
-
-      const product = await ProductModel.findOne({
-        shopify_id: id,
-      });
-      const generatedContent = {
-        product: product._id,
-        prompt: prompt,
-        completion: { content: response.data.choices[0].text },
-      };
-
-      // const newProduct = product[0].generatedContent.push(generatedContent);
-      const completion = await CompletionModel.create(generatedContent);
-
-      const updatedProduct = await ProductModel.findOneAndUpdate(
-        { shopify_id: id },
-        { $push: { generatedContent: completion._id } }
-      );
-
-      const productUpdates = await ProductModel.findOne({
-        shopify_id: id,
-      }).populate({ path: "generatedContent" });
-
-      body = productUpdates;
-    } catch (e) {
-      console.log(`Failed to process products/edit: ${e.message}`);
-      status = 500;
-      error = e.message;
-    }
-    res.status(status).send({ success: status === 200, error, body: body });
-  });
+  app.use("/api/completions", completionRoutes);
 
   app.use((req, res, next) => {
     const shop = Shopify.Utils.sanitizeShop(req.query.shop);

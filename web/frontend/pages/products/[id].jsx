@@ -45,7 +45,11 @@ export default function EditProduct() {
   const [titleValue, setTitleValue] = useState("");
   const [descriptionValue, setDescriptionValue] = useState("");
   const [isDescription, setIsDescription] = useState(false);
+  const [promptValue, setPromptValue] = useState("");
+  const [isPrompt, setIsPrompt] = useState(false);
+
   const [isTitle, setIsTitle] = useState(false);
+
   const fetch = useAuthenticatedFetch();
   const {
     data,
@@ -53,7 +57,7 @@ export default function EditProduct() {
     isLoading: isLoadingProduct,
     isRefetching: isRefetchingProduct,
   } = useAppQuery({
-    url: "/api/products/edit/" + id,
+    url: "/api/products/edit" + id,
     reactQueryOptions: {
       onError: () => {
         console.log("error");
@@ -66,6 +70,7 @@ export default function EditProduct() {
       },
     },
   });
+
   const getTitleValue = useCallback(() => {
     if (isFetched ?? !isLoadingProduct) {
       if (!isTitle) {
@@ -88,6 +93,17 @@ export default function EditProduct() {
     }
   }, [isLoadingProduct, isDescription]);
 
+  // const getPromptValue = useCallback(() => {
+  //   if (isFetched ?? !isLoadingProduct) {
+  //     if (!isPrompt) {
+  //       setPromptValue(data.body.currentDescription);
+  //     }
+  //     setIsPrompt(true);
+
+  //     return data.body.currentDescription;
+  //   }
+  // }, [isLoadingProduct, isPrompt]);
+
   const title = useMemo(() => {
     let title;
     if (isFetched ?? !isLoadingProduct) {
@@ -109,14 +125,27 @@ export default function EditProduct() {
     []
   );
   const handleDescriptionChange = useCallback((newValue) => {
-    console.log(newValue);
     setDescriptionValue(newValue);
+  }, []);
+
+  const handlePromptChange = useCallback((newValue) => {
+    setPromptValue(newValue);
+    // console.log(newValue);
   }, []);
 
   const completions =
     isFetched ?? !isLoadingProduct ?? data !== undefined ? (
       data.body.generatedContent.map((data) => {
-        return <CompletionContent key={data._id} data={data} />;
+        return (
+          <Card.Section>
+            <CompletionContent
+              refetchProduct={refetchProduct}
+              key={data._id}
+              completionId={data._id}
+              data={data}
+            />
+          </Card.Section>
+        );
       })
     ) : (
       <div> Loading..</div>
@@ -138,10 +167,10 @@ export default function EditProduct() {
     isFetched ?? !isLoadingProduct ?? data !== undefined ? (
       <TextField
         name="description"
-        label="CurrentDescription"
-        onChange={handleDescriptionChange}
+        label="Prompt"
+        onChange={handlePromptChange}
         multiline={4}
-        value={descriptionValue}
+        value={promptValue}
       ></TextField>
     ) : (
       <TextField label="CurrentDescription" value={"loading..."}></TextField>
@@ -150,12 +179,6 @@ export default function EditProduct() {
   const handleSubmit = useCallback(async (_event) => {
     console.log(_event.target);
     const formData = new FormData(_event.target);
-    for (let [key, value] of formData) {
-      console.log(key);
-      console.log(value);
-    }
-    formData.set("tags", selectedTags);
-    console.log(selectedTags);
     // console.log(
     //   formData.get("title"),
     //   formData.get("tags"),
@@ -171,12 +194,21 @@ export default function EditProduct() {
         method: "post",
       }
     ).then((res) => res.json());
+
+    if (response.success) {
+      refetchProduct();
+    }
+    console.log(response);
     console.log(response.body);
   });
 
   console.log(id);
   return (
-    <Page fullWidth>
+    <Page
+      title="Generate Product Description"
+      subtitle={"Product: " + titleValue}
+      fullWidth
+    >
       <TitleBar title="Generate Text" />
       <Layout>
         <Layout.Section>
@@ -185,14 +217,13 @@ export default function EditProduct() {
             <Subheading>Tags</Subheading>
             <Form onSubmit={handleSubmit}>
               <FormLayout>
-                <MultiSelect
+                {/* <MultiSelect
                   setSelectedTags={setSelectedTags}
                   selectedTags={selectedTags}
                   data={data}
                   isLoadingProduct={isLoadingProduct}
                   isFetched={isFetched}
-                />
-                {titleField}
+                /> */}
                 {DescriptionField}
                 <Button submit>Generate</Button>
               </FormLayout>
@@ -202,9 +233,6 @@ export default function EditProduct() {
             <Heading>Completions</Heading>
 
             {completions}
-            <TextContainer>
-              <p>Body</p>
-            </TextContainer>
           </Card>
         </Layout.Section>
         <Layout.Section secondary>
